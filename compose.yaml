@@ -1,0 +1,29 @@
+services:
+  mark:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${MARK_PORT:-3100}:3100"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3100
+      MARK_DATA_DIR: /data
+      MARK_INITIAL_PASSWORD_FILE: /run/secrets/initial_password
+      MARK_SECURE_COOKIE: ${MARK_SECURE_COOKIE:-0}
+      MARK_SYNC_INTERVAL_MINUTES: ${MARK_SYNC_INTERVAL_MINUTES:-60}
+      MARK_MODEL_BASE_URL: ${MARK_MODEL_BASE_URL:-}
+      MARK_MODEL_NAME: ${MARK_MODEL_NAME:-}
+      MARK_MODEL_API_KEY: ${MARK_MODEL_API_KEY:-}
+    volumes:
+      - ${MARK_DATA_HOST_DIR:-./data}:/data
+    secrets:
+      - initial_password
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+secrets:
+  initial_password:
+    file: ./secrets/initial-password

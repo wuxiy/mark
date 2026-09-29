@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-server/
+.data/
+data/
+restored-data/
+backups/
+.env
+secrets/
+coverage/
+*.log

@@ -2,7 +2,7 @@
 
 <!-- impeccable:product-schema 1 -->
 
-> 状态：V0.1 产品目标与验收草案。本文描述计划，不表示功能已实现。
+> 状态：V0.1 产品与验收基线，功能实施中。实际完成范围与未通过项见 [实施计划](IMPLEMENTATION_PLAN.md)。
 
 ## Platform
 

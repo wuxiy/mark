@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+dist-server
+.data
+data
+restored-data
+backups
+secrets
+.env
+*.log
