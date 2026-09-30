@@ -1,49 +1,90 @@
 # Mark
 
-> 面向持续更新的开源知识源，提供安静的个人阅读、标注与回访空间。
+> 把持续更新的开源文档仓库放进同一个书架，在浏览器中阅读、标注，并回访上游变化。
 
-Mark 把公开 GitHub 文档仓库汇入单用户书架，在电脑 Web 浏览器中阅读 Markdown、保存个人标注，并跟随上游变化。应用使用 React + Fastify + SQLite，原文保存在只读 Git 镜像中，笔记不会写回仓库。
+![Reader 设计原型](prototypes/reader-v0.1.png)
 
-![Reader 设计基准](prototypes/reader-v0.1.png)
+> [!NOTE]
+> 图片是 Reader 的设计原型，并非运行截图。Mark V0.1 已有可运行的 Web 页面与 API；[完整验收清单](IMPLEMENTATION_PLAN.md)中的 A01–A16 尚未逐项完成。
 
-**当前状态：V0.1 开发中。** 已有可运行的 Web 页面和 API；本地构建、自动化测试及两个公开仓库的浏览器导入、阅读和跨来源英文搜索已验证。Docker 容器、目标 NAS、多来源长期同步及外部模型的实际连接尚待验收。图片是已确认的设计基准，细节以运行界面和后续验收为准。
+Mark 面向单用户、电脑 Web 浏览器。一个知识源对应一个公开 GitHub 仓库：应用只读取上游 Git 版本，划线、笔记、书签和阅读位置单独保存在本地数据目录，不写回原仓库。
 
-## 已实现的主流程
+## 主要功能
 
-- 添加公开 GitHub 仓库，按目录阅读 Markdown、相对图片和链接；可手动或定时同步，在 Settings 调整频率，并暂停、恢复、重命名或移除单个来源。
-- 保存阅读进度、完成状态、书签、划线与笔记；在 My Marks 回访，变化后无法确认的标注进入待复核。
-- 在 Updates 查看新增、修改、删除及双版本对照；跨来源搜索当前已发布文档。
-- 可选 Ask：配置兼容模型后，基于文档片段回答并提供可打开的引用；未配置时阅读和搜索照常使用。
+- **阅读**：按来源目录打开 Markdown，显示页内目录、代码、表格，以及仓库内的相对图片和文档链接。
+- **留下标记**：保存划线、笔记、书签、阅读进度和手动设置的完成状态；上游内容变化后，无法可靠定位的标注进入待复核。
+- **跟进更新**：手动或定时同步来源，查看新增、修改、删除的文档和前后版本差异；可暂停、恢复或移除来源。
+- **找回内容**：跨来源按关键词搜索当前文档；可选 Ask 在配置兼容模型后，基于检索片段回答并列出文档引用。
 
-## 本地运行
+## 快速开始
 
-需要 Node.js `>=24.12.0` 和 Git。先创建 `secrets/initial-password`，写入一行至少 12 个字符的初始密码；首次运行会将密码哈希保存到数据目录。
+需要 **Node.js ≥ 24.12.0**、npm 和 Git。全新安装时，在仓库根目录执行：
 
 ```bash
 npm ci
+mkdir -p secrets
+node -p "require('node:crypto').randomBytes(24).toString('hex')" > secrets/initial-password
+chmod 600 secrets/initial-password
 npm run build
 MARK_DATA_DIR=.data MARK_INITIAL_PASSWORD_FILE=secrets/initial-password npm start
 ```
 
-打开 `http://127.0.0.1:3100`。开发时可分别运行 `npm run dev:api` 和 `npm run dev:web`，Vite 会把 `/api` 代理到本地 API 服务。
+打开 <http://127.0.0.1:3100>，使用 `secrets/initial-password` 中的密码登录，再从 **Library → 添加来源** 导入公开 GitHub 仓库。密码文件只应在全新数据目录首次启动前生成：密码哈希写入数据库后，重写文件不会修改登录密码。`secrets/` 和 `.data/` 已被 Git 忽略。
 
-| 命令 | 用途 |
+开发时可以在两个终端分别启动 API 和 Vite 页面：
+
+```bash
+MARK_DATA_DIR=.data MARK_INITIAL_PASSWORD_FILE=secrets/initial-password npm run dev:api
+```
+
+```bash
+npm run dev:web
+```
+
+开发页面默认在 <http://127.0.0.1:5173>，`/api` 请求代理到本机 `3100` 端口。
+
+## 配置与部署
+
+`npm start` 从进程环境读取配置，**不会自动加载 `.env`**。常用变量如下：
+
+| 变量 | 用途 | 默认值 |
+| --- | --- | --- |
+| `HOST` / `PORT` | 服务监听地址和端口 | `127.0.0.1` / `3100` |
+| `MARK_DATA_DIR` | SQLite 数据库与 Git 镜像目录 | `.data` |
+| `MARK_INITIAL_PASSWORD_FILE` | 首次初始化时读取的密码文件 | 未设置 |
+| `MARK_SYNC_INTERVAL_MINUTES` | 新数据库的初始同步间隔，之后在 Settings 调整；`0` 关闭定时检查 | `60` |
+| `MARK_SECURE_COOKIE` | 经 HTTPS 访问时设为 `1` | `0` |
+| `MARK_MODEL_BASE_URL` / `MARK_MODEL_NAME` | 同时设置后启用兼容 Chat Completions 的 Ask | 未设置 |
+| `MARK_MODEL_API_KEY` | 模型服务要求密钥时设置 | 未设置 |
+
+Linux 主机完成构建后，可以让页面与 API 由同一进程在 `13200` 端口提供：
+
+```bash
+HOST=0.0.0.0 PORT=13200 MARK_DATA_DIR=./data MARK_INITIAL_PASSWORD_FILE=secrets/initial-password npm start
+```
+
+长期运行可交给 systemd 托管；从服务器外访问还需网络层允许该端口。仓库也提供 [Docker Compose 部署与备份步骤](DEPLOYMENT.md)：`.env.example` 中的 `MARK_PORT`、`MARK_DATA_HOST_DIR` 是 **Compose 配置**，不是直接运行 Node 时的环境变量。
+
+> [!IMPORTANT]
+> 备份需覆盖整个数据目录，包括 SQLite 数据库、可能存在的 WAL 文件与 `repos/` Git 镜像。只有数据库不足以保证历史版本仍可阅读；完整恢复演练尚未通过验收。
+
+## 开发与验证
+
+| 命令 | 作用 |
 | --- | --- |
 | `npm run check` | 前后端 TypeScript 检查 |
-| `npm test` | 来源、同步、阅读记录、标注、搜索、差异及问答降级测试 |
-| `npm run build` | 构建页面和 API |
-| `npm start` | 启动已构建的同源服务 |
+| `npm test` | 运行来源、发布、登录及阅读 API 等自动化测试 |
+| `npm run build` | 检查类型并构建页面与 API |
+| `npm start` | 启动已构建的同源 Web 服务 |
 
-## 部署与文档
+当前代码已通过 `npm run build` 和 `npm test`（5 项通过、0 项跳过）；此前在浏览器对两个公开仓库做过导入、阅读和跨来源英文搜索的局部检查。这些结果不能代替多来源长期同步、外部模型、目标环境和备份恢复的完整验收。桌面宽屏浏览器是当前设计范围；手机浏览器布局尚未设计。
 
-[部署与备份恢复](DEPLOYMENT.md)提供 Docker Compose、模型配置和停机备份步骤。Compose 配置已做语法检查；目标 NAS 的容器启动、备份恢复及多来源验收尚未完成。
+## 项目文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [产品文档](PRODUCT.md) | 定位、用户场景、V0.1 范围与验收标准 |
-| [技术文档](TECHNICAL.md) | 架构、数据模型、同步与标注方案 |
-| [设计文档](DESIGN.md) | 信息架构、阅读器交互、视觉规范与宽屏浏览器布局 |
-| [Web 产品原型](PROTOTYPE.md) | 页面图、流程与状态设计 |
-| [实施与验收清单](IMPLEMENTATION_PLAN.md) | 分阶段工作与可验证的验收项 |
-
-本轮只设计和实现电脑 Web 浏览器视图；手机浏览器布局不在当前范围。
+| [产品文档](PRODUCT.md) | 用户场景、范围与产品验收标准 |
+| [技术文档](TECHNICAL.md) | 模块、数据模型与同步方案 |
+| [设计文档](DESIGN.md) | 阅读器交互与视觉规范 |
+| [Web 原型](PROTOTYPE.md) | 页面结构、流程与状态设计 |
+| [实施与验收清单](IMPLEMENTATION_PLAN.md) | 分阶段工作和 A01–A16 验收项 |
