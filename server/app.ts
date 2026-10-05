@@ -10,6 +10,7 @@ import { openDatabase } from './db.ts';
 import { mirrorPath, previewGitHubSource, readAsset, readTreeFile, safeTreePath, summarizeMarkdown } from './git.ts';
 import { queueSync } from './sync.ts';
 import { saveSyncIntervalMinutes, syncIntervalMinutes } from './settings.ts';
+import { OidcLogin, OidcFailure, type OidcOptions, type OidcFetch } from './oidc.ts';
 
 export interface AppOptions {
   dataDir: string;
@@ -17,6 +18,8 @@ export interface AppOptions {
   initialPasswordFile?: string;
   secureCookie?: boolean;
   model?: ModelConfig;
+  oidc?: OidcOptions;
+  oidcFetch?: OidcFetch;
 }
 
 type Session = { csrf: string; tokenHash: string };
@@ -46,15 +49,23 @@ function sourceView(db: DatabaseSync) {
 }
 
 export async function buildApp(options: AppOptions) {
+  if (options.oidc && !options.secureCookie) throw new Error('OIDC 登录需要 MARK_SECURE_COOKIE=1 和 HTTPS 浏览器入口');
+  const oidc = options.oidc ? new OidcLogin(options.oidc, options.oidcFetch) : undefined;
   const db = openDatabase(join(options.dataDir, 'mark.db'));
   initializePassword(db, options.initialPasswordFile);
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
   const loginFailures = new Map<string, { count: number; until: number }>();
-  app.addHook('onClose', async () => db.close());
+  app.addHook('onClose', async () => { await oidc?.close(); db.close(); });
+  const authConfigured = () => configured(db) || Boolean(oidc);
+  const sessionCookie = (token: string, maxAge = 2592000) => `mark_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${maxAge}${options.secureCookie ? '; Secure' : ''}`;
+  const bindingCookie = (token: string, maxAge = 300) => `__Host-mark-oidc=${token}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
+  const bindingFor = (request: FastifyRequest) => request.headers.cookie?.split(';').map(part => part.trim()).find(part => part.startsWith('__Host-mark-oidc='))?.slice('__Host-mark-oidc='.length);
+  const publicOidc = new Set(['/api/auth/oidc/config', '/api/auth/oidc/start', '/api/auth/oidc/callback']);
   app.addHook('onRequest', async (request, reply) => {
     const path = request.url.split('?')[0];
     if (path === '/api/health' || path === '/api/session' || path === '/api/login' || !path.startsWith('/api/')) return;
-    if (!configured(db)) return error(reply, 503, 'NOT_CONFIGURED', '请先通过本地部署流程设置密码');
+    if (request.method === 'GET' && publicOidc.has(path)) return;
+    if (!authConfigured()) return error(reply, 503, 'NOT_CONFIGURED', '请先通过本地部署流程配置登录方式');
     const session = sessionFor(db, request);
     if (!session) return error(reply, 401, 'UNAUTHORIZED', '请登录后继续');
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) && request.headers['x-csrf-token'] !== session.csrf) {
@@ -65,7 +76,38 @@ export async function buildApp(options: AppOptions) {
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/session', async (request) => {
     const session = sessionFor(db, request);
-    return { configured: configured(db), authenticated: Boolean(session), csrf: session?.csrf ?? null };
+    return { configured: authConfigured(), passwordConfigured: configured(db), oidcEnabled: Boolean(oidc), authenticated: Boolean(session), csrf: session?.csrf ?? null };
+  });
+  app.get('/api/auth/oidc/config', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { enabled: Boolean(oidc) };
+  });
+  function oidcError(reply: FastifyReply, cause: unknown) {
+    const unavailable = !(cause instanceof OidcFailure) || cause.code === 'OIDC_UNAVAILABLE';
+    const message = unavailable ? '统一认证暂时不可用，请稍后重试或使用 Mark 密码登录。' : '登录验证未通过，请从 Mark 重新发起统一登录。';
+    return reply.code(unavailable ? 503 : 403).type('text/html; charset=utf-8').send(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Mark · 登录未完成</title><link rel="icon" href="data:,"><body style="font-family:system-ui;max-width:560px;margin:20vh auto;padding:24px;color:#26352f"><h1>登录未完成</h1><p>${message}</p><a style="color:#147d68" href="/?auth_error=${unavailable ? 'unavailable' : 'denied'}">返回 Mark 登录</a></body></html>`);
+  }
+  app.get('/api/auth/oidc/start', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
+    if (!oidc) return error(reply, 404, 'OIDC_DISABLED', '未启用统一身份登录');
+    try {
+      const started = await oidc.start(bindingFor(request));
+      reply.header('Set-Cookie', bindingCookie(started.binding));
+      return reply.redirect(started.url);
+    } catch (cause) { return oidcError(reply, cause); }
+  });
+  app.get('/api/auth/oidc/callback', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
+    reply.header('Set-Cookie', bindingCookie('', 0));
+    if (!oidc) return error(reply, 404, 'OIDC_DISABLED', '未启用统一身份登录');
+    try {
+      await oidc.finish(request.url.includes('?') ? request.url.slice(request.url.indexOf('?')) : '', bindingFor(request));
+      const previous = sessionFor(db, request);
+      if (previous) deleteSession(db, previous.tokenHash);
+      const session = createSession(db);
+      reply.header('Set-Cookie', [bindingCookie('', 0), sessionCookie(session.token)]);
+      return reply.redirect('/library');
+    } catch (cause) { return oidcError(reply, cause); }
   });
   app.post('/api/login', async (request, reply) => {
     if (!configured(db)) return error(reply, 503, 'NOT_CONFIGURED', '请先通过本地部署流程设置密码');
@@ -80,13 +122,13 @@ export async function buildApp(options: AppOptions) {
     }
     loginFailures.delete(key);
     const session = createSession(db);
-    reply.header('Set-Cookie', `mark_session=${session.token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=2592000${options.secureCookie ? '; Secure' : ''}`);
+    reply.header('Set-Cookie', sessionCookie(session.token));
     return { authenticated: true, csrf: session.csrf };
   });
   app.post('/api/logout', async (request, reply) => {
     const session = sessionFor(db, request);
     if (session) deleteSession(db, session.tokenHash);
-    reply.header('Set-Cookie', `mark_session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0${options.secureCookie ? '; Secure' : ''}`);
+    reply.header('Set-Cookie', sessionCookie('', 0));
     return { authenticated: false };
   });
 

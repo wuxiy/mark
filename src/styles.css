@@ -299,6 +299,10 @@ a { color: inherit; text-decoration: none; }
 .password-field input { height: 58px; font-size: 17px; padding-right: 65px; }
 .password-field button { position: absolute; right: 15px; top: 12px; height: 34px; border: 0; background: none; color: #657080; }
 .login-submit { width: 100%; margin-top: 32px; height: 57px; font-size: 18px; }
+.sso-submit { margin-top: 0; }
+.login-form > .sso-hint { margin: 14px 0 28px; font-size: 14px; }
+.password-toggle { display: block; margin: 0 auto; border: 0; background: none; color: #586372; text-decoration: underline; text-underline-offset: 4px; padding: 8px; }
+.password-login { margin-top: 24px; }
 .login-foot { position: absolute; bottom: 60px; color: #767f8c; font-size: 15px; }
 .setup-message { text-align: center; }
 .setup-message h1 { font-size: 35px; }

@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { buildApp } from './app.ts';
 import { queueSync } from './sync.ts';
 import { dueSourceIds, saveSyncIntervalMinutes } from './settings.ts';
+import { oidcFromEnv } from './oidc.ts';
 
 const dataDir = resolve(process.env.MARK_DATA_DIR ?? '.data');
 const webDir = resolve('dist');
@@ -10,6 +11,7 @@ const { app, db } = await buildApp({
   webDir,
   initialPasswordFile: process.env.MARK_INITIAL_PASSWORD_FILE,
   secureCookie: process.env.MARK_SECURE_COOKIE === '1',
+  oidc: oidcFromEnv(process.env),
   model: {
     baseUrl: process.env.MARK_MODEL_BASE_URL,
     model: process.env.MARK_MODEL_NAME,

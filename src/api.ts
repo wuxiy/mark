@@ -2,6 +2,8 @@ export interface SessionInfo {
   configured: boolean;
   authenticated: boolean;
   csrf: string | null;
+  passwordConfigured: boolean;
+  oidcEnabled: boolean;
 }
 
 export interface Source {

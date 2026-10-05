@@ -1,6 +1,34 @@
 # Mark 部署与恢复
 
-Mark 是单用户 Web 应用。浏览器访问同一服务提供的页面和 API；持久化目录同时保存 SQLite 数据库和 Git 镜像。当前提供 Docker Compose 配置，目标 NAS 的容器运行与恢复演练仍需在设备上执行。
+Mark 是单用户 Web 应用。浏览器访问同一服务提供的页面和 API；持久化目录同时保存 SQLite 数据库和 Git 镜像。当前服务器使用原生 Node + systemd；Docker Compose 是可选部署方式，完整备份恢复演练仍需独立验收。
+
+## 原生 Node + systemd 启动
+
+以下路径、运行用户和端口均为部署示例，按目标环境填写；实际服务器信息不纳入 Git。
+
+| 项目 | 路径或值 |
+| --- | --- |
+| 项目 | `/srv/mark` |
+| Node | Node.js ≥ 24.12.0，使用目标环境的可执行文件路径 |
+| 服务 | `mark.service`，以专用普通用户运行 |
+| 配置 | 项目根目录 `.env`，systemd `EnvironmentFile` 读取，权限 `600` |
+| 数据 | 项目 `data/`，保留原 SQLite 与 Git 镜像 |
+| 监听 | `127.0.0.1:3100`；跨主机代理时按需调整，页面和 API 同源 |
+| HTTPS 入口 | 部署时设置的浏览器域名，例如 `https://mark.example.com` |
+
+更新时先保存原构建目录、依赖配置和 `.env`，检查远程源码是否已有修改；执行 `npm ci`、`npm run build` 后仅重启 Mark：
+
+```bash
+sudo systemctl restart mark
+systemctl is-active mark
+curl --fail http://127.0.0.1:3100/api/health
+```
+
+authentik 的独立客户端、Owner 绑定、密钥文件、可信内部 HTTPS 通道与回退步骤见 [统一认证文档](docs/AUTHENTIK.md)。保留原初始密码文件，禁止用新密码文件覆盖已有 Owner 凭据。
+
+2026-10-06 已完成统一认证发布与外部 HTTPS 浏览器验证：Work-OS 登录一次后可进入 Mark，原密码可回退；Mark 退出不影响其他应用。发布前后原业务行内容与密码哈希一致。原文件备份与原始验证证据仅保留在私有运行环境；公开验收摘要见统一认证文档。
+
+备份原生运行的服务时，使用 `sudo systemctl stop mark` 停止写入，再快照完整 `data/` 目录；完成后 `sudo systemctl start mark`。不要只复制数据库或在 OIDC 发布时回滚业务数据。
 
 ## Docker Compose 启动
 

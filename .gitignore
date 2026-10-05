@@ -6,6 +6,11 @@ data/
 restored-data/
 backups/
 .env
+.env.*
+!.env.example
 secrets/
+clients.json
+clients-before-*.json
+bootstrap-token
 coverage/
 *.log

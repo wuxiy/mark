@@ -15,6 +15,7 @@ Mark 面向单用户、电脑 Web 浏览器。一个知识源对应一个公开 
 - **留下标记**：保存划线、笔记、书签、阅读进度和手动设置的完成状态；上游内容变化后，无法可靠定位的标注进入待复核。
 - **跟进更新**：手动或定时同步来源，查看新增、修改、删除的文档和前后版本差异；可暂停、恢复或移除来源。
 - **找回内容**：跨来源按关键词搜索当前文档；可选 Ask 在配置兼容模型后，基于检索片段回答并列出文档引用。
+- **统一登录**：可接入 Work-OS authentik，使用同一 Owner 身份；保留 Mark 密码登录和应用内单独退出。
 
 ## 快速开始
 
@@ -63,7 +64,7 @@ Linux 主机完成构建后，可以让页面与 API 由同一进程在 `13200` 
 HOST=0.0.0.0 PORT=13200 MARK_DATA_DIR=./data MARK_INITIAL_PASSWORD_FILE=secrets/initial-password npm start
 ```
 
-长期运行可交给 systemd 托管；从服务器外访问还需网络层允许该端口。仓库也提供 [Docker Compose 部署与备份步骤](DEPLOYMENT.md)：`.env.example` 中的 `MARK_PORT`、`MARK_DATA_HOST_DIR` 是 **Compose 配置**，不是直接运行 Node 时的环境变量。
+长期运行可交给 systemd 托管；当前服务器使用原生 Node + systemd，浏览器经 HTTPS 入口访问。详见 [部署与备份](DEPLOYMENT.md)和 [authentik 接入](docs/AUTHENTIK.md)。仓库也保留 Docker Compose 配置：`.env.example` 中的 `MARK_PORT`、`MARK_DATA_HOST_DIR` 是 **Compose 配置**，不是直接运行 Node 时的环境变量。
 
 > [!IMPORTANT]
 > 备份需覆盖整个数据目录，包括 SQLite 数据库、可能存在的 WAL 文件与 `repos/` Git 镜像。只有数据库不足以保证历史版本仍可阅读；完整恢复演练尚未通过验收。
@@ -77,7 +78,7 @@ HOST=0.0.0.0 PORT=13200 MARK_DATA_DIR=./data MARK_INITIAL_PASSWORD_FILE=secrets/
 | `npm run build` | 检查类型并构建页面与 API |
 | `npm start` | 启动已构建的同源 Web 服务 |
 
-当前代码已通过 `npm run build` 和 `npm test`（5 项通过、0 项跳过）；此前在浏览器对两个公开仓库做过导入、阅读和跨来源英文搜索的局部检查。这些结果不能代替多来源长期同步、外部模型、目标环境和备份恢复的完整验收。桌面宽屏浏览器是当前设计范围；手机浏览器布局尚未设计。
+当前代码已通过 `npm run build` 和 `npm test`（26 项通过、0 项跳过，包含 OIDC 异常用例）；此前在浏览器对两个公开仓库做过导入、阅读和跨来源英文搜索的局部检查。这些结果不能代替多来源长期同步、外部模型和备份恢复的完整验收。电脑宽屏浏览器是当前设计范围。
 
 ## 项目文档
 

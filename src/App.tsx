@@ -38,18 +38,30 @@ function Skeleton({ rows = 4 }: { rows?: number }) {
   return <div className="skeleton-stack" aria-label="正在加载" aria-busy="true">{Array.from({ length: rows }, (_, index) => <div className="skeleton-row" key={index} />)}</div>;
 }
 
-function Login({ onLogin }: { onLogin: (session: SessionInfo) => void }) {
+function Login({ session, onLogin }: { session: SessionInfo; onLogin: (session: SessionInfo) => void }) {
   const [password, setPassword] = useState('');
   const [visible, setVisible] = useState(false);
   const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(!session.oidcEnabled);
+  const [message, setMessage] = useState<string | null>(() => {
+    const failure = new URLSearchParams(window.location.search).get('auth_error');
+    return failure === 'unavailable' ? '统一认证暂时不可用，可重试或使用 Mark 密码登录。' : failure === 'denied' ? '登录验证未通过，请重新发起统一登录。' : null;
+  });
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('auth_error')) { params.delete('auth_error'); window.history.replaceState(null, '', window.location.pathname + (params.size ? `?${params}` : '') + window.location.hash); }
+    const restore = () => setRedirecting(false);
+    window.addEventListener('pageshow', restore);
+    return () => window.removeEventListener('pageshow', restore);
+  }, []);
   async function submit(event: FormEvent) {
     event.preventDefault();
     setPending(true);
     setMessage(null);
     try {
       const result = await request<{ authenticated: boolean; csrf: string }>('/login', { method: 'POST', body: JSON.stringify({ password }) });
-      onLogin({ configured: true, authenticated: true, csrf: result.csrf });
+      onLogin({ ...session, authenticated: true, csrf: result.csrf });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '登录失败');
     } finally {
@@ -58,14 +70,18 @@ function Login({ onLogin }: { onLogin: (session: SessionInfo) => void }) {
   }
   return <div className="login-page">
     <div className="login-brand">Mark</div>
-    <form className="login-form" onSubmit={submit}>
-      <h1>登录 Mark</h1>
+    <section className="login-form" aria-labelledby="login-title">
+      <h1 id="login-title">登录 Mark</h1>
       <p>访问你的个人知识库</p>
+      {message ? <Notice message={message} /> : null}
+      {session.oidcEnabled ? <><button type="button" className="primary-button login-submit sso-submit" disabled={redirecting} onClick={() => { setRedirecting(true); window.location.assign('/api/auth/oidc/start'); }}>{redirecting ? '正在前往身份中心…' : '统一身份登录'}</button><p className="sso-hint">使用 Work-OS 账户继续</p></> : null}
+      {session.passwordConfigured && session.oidcEnabled ? <button type="button" className="password-toggle" aria-expanded={passwordOpen} onClick={() => setPasswordOpen(!passwordOpen)}>{passwordOpen ? '收起密码登录' : '使用 Mark 密码登录'}</button> : null}
+      {session.passwordConfigured && passwordOpen ? <form className="password-login" onSubmit={submit}>
       <label htmlFor="password">密码</label>
       <div className="password-field"><input id="password" autoComplete="current-password" type={visible ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" required /><button type="button" onClick={() => setVisible(!visible)} aria-label={visible ? '隐藏密码' : '显示密码'}>{visible ? '隐藏' : '显示'}</button></div>
-      {message ? <Notice message={message} /> : null}
-      <button className="primary-button login-submit" disabled={pending}>{pending ? '登录中…' : '登录'}</button>
-    </form>
+      <button className={`${session.oidcEnabled ? 'secondary-button' : 'primary-button'} login-submit`} disabled={pending}>{pending ? '登录中…' : '登录'}</button>
+      </form> : null}
+    </section>
     <div className="login-foot">个人部署 · 浏览器访问</div>
   </div>;
 }
@@ -482,6 +498,6 @@ export default function App() {
   if (message) return <div className="boot-message"><Notice message={message} retry={() => window.location.reload()} /></div>;
   if (!session) return <div className="boot-message"><Skeleton rows={3} /></div>;
   if (!session.configured) return <div className="login-page"><div className="login-brand">Mark</div><div className="setup-message"><h1>尚未设置访问密码</h1><p>请在部署端完成初始设置，然后刷新此页面。</p><button className="secondary-button" onClick={() => window.location.reload()}>重新检查</button></div></div>;
-  if (!session.authenticated) return <Login onLogin={setSession} />;
-  return <Shell session={session} onLogout={() => setSession({ configured: true, authenticated: false, csrf: null })} />;
+  if (!session.authenticated) return <Login session={session} onLogin={setSession} />;
+  return <Shell session={session} onLogout={() => setSession({ ...session, authenticated: false, csrf: null })} />;
 }
