@@ -1,0 +1,10 @@
+Use case: logo-brand
+Asset type: final logo for Mark, a single-user web application for reading continuously updated GitHub documentation, highlighting passages, preserving personal notes and revisiting changes.
+Primary request: Create one refined, memorable horizontal logo lockup: an original geometric symbol at the left and the exact wordmark "Mark" at the right.
+Symbol concept: an abstract capital M formed from two folded page/bookmark strokes, with a small intentional negative-space fold. Hint at reading and marking through the geometry. Clear compact silhouette that works at small sizes. Avoid a literal detailed book drawing.
+Style/medium: exceptionally clean flat graphic, vector-friendly forms, crisp edges, precise spacing, quiet editorial character, restrained and purposeful.
+Composition: one horizontal lockup, symbol and wordmark optically aligned, balanced gap, centered in a wide canvas with modest transparent padding. The symbol height should be approximately the cap-height of the wordmark. No alternate logos or presentation board.
+Color palette: symbol in solid deep teal #147D68; wordmark in solid near-black #18181B. No other colors.
+Typography: bespoke modern sans-serif lettering, moderately bold, clear lowercase forms, subtle character, exact spelling M-a-r-k. No slogan or extra text.
+Background: actual transparent alpha background.
+Constraints: only the symbol and wordmark; no enclosing app tile, circles or badges, no gradients, no shadows, no texture, no 3D, no mockup, no watermark. Deliver a polished usable transparent raster logo at high resolution.
