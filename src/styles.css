@@ -92,6 +92,8 @@ a { color: inherit; text-decoration: none; }
 .source-actions { display: flex; justify-content: flex-end; gap: 5px; }
 .source-actions button { border: 0; background: none; color: #657080; font-size: 13px; padding: 6px; }
 .source-actions button:hover { color: #147d68; }
+.source-edit-feedback { color: #147d68; font-size: 14px; margin: 0 0 20px; }
+.source-change-hint { grid-column: 2 / -1; color: #657080; font-size: 12px; line-height: 1.6; padding: 2px 0 6px; }
 .source-error { grid-column: 1 / -1; color: #ab3139; font-size: 13px; padding-left: 44px; }
 .table-empty { color: #707987; text-align: center; padding: 45px 0; border-top: 1px solid #e7e9ec; }
 .notice { display: flex; align-items: center; gap: 9px; color: #9b3438; background: #fff8f8; border: 1px solid #f3d7d8; border-radius: 6px; padding: 11px 13px; margin: 13px 0; font-size: 14px; }
@@ -260,7 +262,8 @@ a { color: inherit; text-decoration: none; }
 .dialog input:focus, .login-form input:focus { border-color: #147d68; box-shadow: 0 0 0 2px #e2f2ed; }
 .optional { color: #7f8996; font-weight: 400; }
 .url-row { display: flex; gap: 8px; }
-.url-row .secondary-button { height: 47px; padding: 0 14px; }
+.url-row input { flex: 1; min-width: 0; }
+.url-row .secondary-button { flex-shrink: 0; white-space: nowrap; height: 47px; padding: 0 14px; }
 .source-preview { border: 1px solid #dce2e7; border-radius: 6px; padding: 17px; margin-top: 15px; }
 .source-preview-title { display: flex; align-items: center; gap: 13px; }
 .source-preview-title div { flex: 1; min-width: 0; }

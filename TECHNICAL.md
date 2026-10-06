@@ -54,7 +54,7 @@ flowchart LR
 
 | 表 | 主要字段 | 约束 |
 | --- | --- | --- |
-| `sources` | `id`, `name`, `url`, `branch`, `published_sha`, `sync_status`, `last_sync_at`, `enabled` | URL 规范化后唯一；每个来源独立发布版本 |
+| `sources` | `id`, `name`, `url`, `branch`, `published_sha`, `published_url`, `sync_status`, `last_sync_at`, `enabled` | URL 规范化后唯一；每个来源独立发布版本 |
 | `documents` | `id`, `source_id`, `path`, `title`, `status`, `current_sha`, `content_hash` | 稳定 ID；当前路径在同一来源内唯一；删除为软删除 |
 | `sync_runs` | `id`, `source_id`, `from_sha`, `to_sha`, `status`, `error`, `started_at`, `finished_at` | 失败不能推进 `published_sha` |
 | `document_changes` | `sync_run_id`, `document_id`, `old_path`, `new_path`, `kind` | `added/modified/deleted/renamed` 可回溯 |
@@ -75,6 +75,15 @@ flowchart LR
 6. 失败时保持旧 `published_sha`、旧索引和旧标注位置；写入错误、允许重试。重复执行相同 `from_sha → to_sha` 应得到同一可见结果。
 
 更新的 Git 对象必须在查看更新记录与历史标注期间可读；清理受保护引用要有保留策略，不能只依赖远端仍保有旧 commit。同步调度采用可配置间隔和启动后错峰执行。网络失败、限流、仓库删除只影响对应来源。
+
+### 修改知识源（已实现）
+
+- `PATCH /api/sources/:id` 接受 `name`（去除首尾空格，1–80 字符）、`url`（公开 GitHub HTTPS 仓库地址）、`syncEnabled` 的非空组合，返回 `{ id, urlChanged }`。非法字段或输入返回 400；来源不存在或已移除返回 404。
+- 同一仓库的大小写、尾斜杠、`.git` 写法规范化后不触发仓库切换。仅修改名称不需要访问 GitHub。不同仓库先解析默认分支，拒绝与其他来源（包括已移除来源）重复，验证后再次检查并以事务保存；失败不部分更新名称或链接。
+- 链接验证与同步共享每来源独占锁；冲突返回 409 `SOURCE_BUSY`。同步时仍可改名称。保存新链接置为 `pending`，不立即创建同步任务，也不改变暂停设置；后续手动或定时同步会使用新 URL 和默认分支。
+- `published_url` 记录当前发布版本来自哪个仓库，迁移时对已有发布版本一次性回填。`GET /api/sources` 的 `pendingUrlChange` 表示配置 URL 与发布 URL 不同，页面提示仍在展示旧内容。进程重启不覆盖这一差异。
+- fetch 前更新镜像的 `origin`，保留旧版本受保护引用。新快照成功后，在发布事务中更新 `published_url`；若仓库发生切换，所有原标注置为 `needs_review`，保留笔记、书签、阅读记录和历史版本。待复核标注须手动确认，不会在后续同步中自动重新挂载。
+- `tests/sources.test.ts` 覆盖修改、规范化、重复、不可访问、锁冲突、移除竞态、暂停、旧库迁移，以及实际 Git 切换、失败回退、搜索更新和历史差异读取。
 
 ## Markdown 与标注
 

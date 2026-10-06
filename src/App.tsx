@@ -143,6 +143,72 @@ function AddSourceDialog({ close, csrf, added }: { close: () => void; csrf: stri
   </div>;
 }
 
+function sourceUrlIdentity(value: string): string {
+  return value.trim().toLowerCase().replace(/\/$/, '').replace(/\.git$/, '');
+}
+
+function EditSourceDialog({ source, csrf, close, saved }: { source: Source; csrf: string | null; close: () => void; saved: (urlChanged: boolean) => void }) {
+  const [name, setName] = useState(source.name);
+  const [url, setUrl] = useState(source.url.replace(/\.git$/, ''));
+  const [preview, setPreview] = useState<{ url: string; name: string; branch: string; existing: { id: number; active: boolean } | null } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  const urlChanged = sourceUrlIdentity(url) !== sourceUrlIdentity(source.url);
+  const duplicate = Boolean(preview?.existing && preview.existing.id !== source.id);
+  const busy = checking || pending;
+  const dirty = name.trim() !== source.name || urlChanged;
+  const validated = !urlChanged || (preview && sourceUrlIdentity(preview.url) === sourceUrlIdentity(url) && !duplicate);
+  useEffect(() => {
+    function key(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !busy) close();
+      if (event.key !== 'Tab') return;
+      const elements = dialog.current?.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled])');
+      if (!elements?.length) return;
+      const first = elements[0], last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [close, busy]);
+  async function check() {
+    if (busy) return;
+    setChecking(true); setPreview(null); setMessage(null);
+    try { setPreview(await request(`/sources/preview?url=${encodeURIComponent(url.trim())}`)); }
+    catch (cause) { setMessage(cause instanceof Error ? cause.message : '无法验证仓库'); }
+    finally { setChecking(false); }
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy || !dirty || !validated || !name.trim()) return;
+    setPending(true); setMessage(null);
+    try {
+      const result = await request<{ urlChanged: boolean }>(`/sources/${source.id}`, {
+        method: 'PATCH', body: JSON.stringify({ name: name.trim(), ...(urlChanged ? { url: preview!.url } : {}) }),
+      }, csrf);
+      saved(result.urlChanged);
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : '保存失败，请重试'); }
+    finally { setPending(false); }
+  }
+  return <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
+    <div ref={dialog} className="dialog" role="dialog" aria-modal="true" aria-labelledby="edit-source-title">
+      <div className="dialog-head"><h2 id="edit-source-title">编辑知识源</h2><button type="button" className="icon-button" disabled={busy} onClick={close} aria-label="关闭编辑"><X size={21} /></button></div>
+      <form onSubmit={submit} aria-busy={busy}>
+        <label htmlFor="edit-source-name">显示名称</label>
+        <input id="edit-source-name" autoFocus required maxLength={80} value={name} disabled={busy} onChange={(event) => { setName(event.target.value); setMessage(null); }} />
+        <label htmlFor="edit-source-url">GitHub 仓库地址</label>
+        <div className="url-row"><input id="edit-source-url" type="url" required maxLength={2048} value={url} disabled={busy || source.syncStatus === 'running'} onChange={(event) => { setUrl(event.target.value); setPreview(null); setMessage(null); }} aria-describedby="edit-source-hint" /><button type="button" className="secondary-button" disabled={busy || !urlChanged || !url.trim() || source.syncStatus === 'running'} onClick={check}>{checking ? '验证中…' : '验证仓库'}</button></div>
+        {preview ? <div className="source-preview"><div className="source-preview-title"><GitBranch size={24} /><div><strong>{preview.name}</strong><span>{preview.url.replace(/\.git$/, '')}</span></div>{!duplicate ? <Check className="preview-check" size={18} /> : null}</div><div className="source-preview-meta">默认分支 {preview.branch} · 公开仓库</div>{duplicate ? <p className="field-hint" role="alert">{preview.existing?.active ? '这个仓库已属于其他知识源，请使用已有来源。' : '这个仓库对应已移除的知识源，请从添加来源中恢复。'}</p> : null}</div> : null}
+        <p id="edit-source-hint" className="dialog-hint">{source.syncStatus === 'running' ? '来源正在同步，可以修改名称；仓库链接请在同步结束后修改。' : urlChanged ? '保存后请同步新仓库。同步成功前保留旧内容，原标注会在成功后进入待复核；笔记、书签和历史版本保留。' : '修改名称不会影响文档、笔记、书签和阅读记录。'}</p>
+        {message ? <Notice message={message} /> : null}
+        <div className="dialog-actions"><button type="button" className="secondary-button" disabled={busy} onClick={close}>取消</button><button className="primary-button" disabled={busy || !dirty || !name.trim() || !validated}>{pending ? '保存中…' : '保存修改'}</button></div>
+      </form>
+    </div>
+  </div>;
+}
+
 function SourceSidebar({ source, currentId }: { source: Source | null; currentId?: number }) {
   const { data, loading } = useApiState<SourceDocuments>(source ? `/sources/${source.id}/documents` : null, [source?.publishedSha]);
   const grouped = useMemo(() => {
@@ -169,17 +235,15 @@ function Topbar({ openSearch }: { openSearch: () => void }) {
 function Library({ sources, loading, message, retry, openAdd, csrf, refresh }: { sources: Source[]; loading: boolean; message: string | null; retry: () => void; openAdd: () => void; csrf: string | null; refresh: () => void }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState('');
-  const { data: recent, loading: recentLoading } = useApiState<RecentDocument[]>('/library/recent');
+  const [editing, setEditing] = useState<Source | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const editReturnFocus = useRef<HTMLElement | null>(null);
+  function closeEditor() { setEditing(null); requestAnimationFrame(() => editReturnFocus.current?.focus()); }
+  const { data: recent, loading: recentLoading, reload: reloadRecent } = useApiState<RecentDocument[]>('/library/recent');
   const filtered = sources.filter((source) => `${source.name} ${source.url}`.toLowerCase().includes(filter.toLowerCase()));
   async function sync(id: number) {
     try { await request(`/sources/${id}/sync`, { method: 'POST' }, csrf); refresh(); }
     catch (error) { window.alert(error instanceof Error ? error.message : '同步失败'); }
-  }
-  async function rename(source: Source) {
-    const name = window.prompt('来源显示名称', source.name)?.trim();
-    if (!name || name === source.name) return;
-    try { await request(`/sources/${source.id}`, { method: 'PATCH', body: JSON.stringify({ name }) }, csrf); refresh(); }
-    catch (error) { window.alert(error instanceof Error ? error.message : '重命名失败'); }
   }
   async function toggleSync(source: Source) {
     try { await request(`/sources/${source.id}`, { method: 'PATCH', body: JSON.stringify({ syncEnabled: !source.syncEnabled }) }, csrf); refresh(); }
@@ -192,9 +256,11 @@ function Library({ sources, loading, message, retry, openAdd, csrf, refresh }: {
   }
   return <div className="page library-page"><div className="page-head"><div><h1>Library</h1><p>管理你的知识来源，继续阅读上次的内容</p></div>{sources.length ? <button className="primary-button" onClick={openAdd}><Plus size={19} />添加来源</button> : null}</div>
     {message ? <Notice message={message} retry={retry} /> : null}
+    {feedback ? <p className="source-edit-feedback" role="status">{feedback}</p> : null}
     {loading && !sources.length ? <><div className="section-heading">知识源</div><Skeleton rows={4} /></> : null}
     {!loading && !sources.length ? <div className="library-empty"><div className="empty-icon"><FileText size={48} strokeWidth={1.4} /></div><h2>添加第一个知识源</h2><p>粘贴公开 GitHub 仓库地址，开始阅读其中的 Markdown。</p><button className="primary-button" onClick={openAdd}><Plus size={20} />添加来源</button><small>知识源保持只读，你的划线和笔记单独保存。</small></div> : null}
-    {sources.length ? <><section className="recent-section"><div className="section-header"><h2>继续阅读</h2></div>{recentLoading && !recent ? <Skeleton rows={2} /> : recent?.length ? <div className="recent-list">{recent.map((item) => <NavLink key={item.id} to={`/read/${item.id}`}><BookOpen size={20} /><span><strong>{item.title}</strong><small>{item.sourceName} / {item.path}</small></span><span className="recent-progress">{item.state === 'completed' ? '已完成' : `${Math.round(item.position * 100)}%`}</span><ChevronRight size={17} /></NavLink>)}</div> : <p className="recent-empty">打开一篇文档后，可以从这里继续阅读。</p>}</section><div className="section-header"><h2>知识源</h2><div className="filter-input"><Search size={17} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索知识源…" aria-label="搜索知识源" /></div></div><div className="source-table"><div className="source-table-head"><span>名称</span><span>仓库</span><span>最后同步</span><span /></div>{filtered.map((source) => <div className="source-row" key={source.id}><button className="source-name" onClick={() => navigate(`/source/${source.id}`)}><GitBranch size={24} /><span><strong>{source.name}</strong><small>{source.documentCount ? `${source.documentCount} 篇文档` : source.syncStatus === 'running' ? '正在读取仓库' : '暂无文档'}</small></span></button><span className="repo-label">{source.url.replace('https://github.com/', '').replace(/\.git$/, '')}</span><span className={source.syncStatus === 'failed' ? 'source-status failed' : 'source-status'}>{!source.syncEnabled ? '已暂停同步' : source.syncStatus === 'running' ? <><LoaderCircle className="spin" size={16} />同步中</> : source.syncStatus === 'failed' ? '同步失败，可重试' : source.lastSyncAt ? <>已同步<small>{formatTime(source.lastSyncAt)}</small></> : '等待导入'}</span><div className="source-actions"><button onClick={() => sync(source.id)} disabled={source.syncStatus === 'running' || !source.syncEnabled} aria-label={`同步 ${source.name}`}>同步</button><button onClick={() => rename(source)} aria-label={`重命名 ${source.name}`}>重命名</button><button onClick={() => toggleSync(source)} aria-label={`${source.syncEnabled ? '暂停同步' : '恢复同步'} ${source.name}`}>{source.syncEnabled ? '暂停' : '恢复'}</button><button onClick={() => remove(source.id)} aria-label={`移除 ${source.name}`}>移除</button></div>{source.lastError ? <div className="source-error">{source.lastError}</div> : null}</div>)}{!filtered.length ? <div className="table-empty">没有匹配的知识源。</div> : null}</div></> : null}
+    {sources.length ? <><section className="recent-section"><div className="section-header"><h2>继续阅读</h2></div>{recentLoading && !recent ? <Skeleton rows={2} /> : recent?.length ? <div className="recent-list">{recent.map((item) => <NavLink key={item.id} to={`/read/${item.id}`}><BookOpen size={20} /><span><strong>{item.title}</strong><small>{item.sourceName} / {item.path}</small></span><span className="recent-progress">{item.state === 'completed' ? '已完成' : `${Math.round(item.position * 100)}%`}</span><ChevronRight size={17} /></NavLink>)}</div> : <p className="recent-empty">打开一篇文档后，可以从这里继续阅读。</p>}</section><div className="section-header"><h2>知识源</h2><div className="filter-input"><Search size={17} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索知识源…" aria-label="搜索知识源" /></div></div><div className="source-table"><div className="source-table-head"><span>名称</span><span>仓库</span><span>最后同步</span><span /></div>{filtered.map((source) => <div className="source-row" key={source.id}><button className="source-name" onClick={() => navigate(`/source/${source.id}`)}><GitBranch size={24} /><span><strong>{source.name}</strong><small>{source.documentCount ? `${source.documentCount} 篇文档` : source.syncStatus === 'running' ? '正在读取仓库' : '暂无文档'}</small></span></button><span className="repo-label">{source.url.replace('https://github.com/', '').replace(/\.git$/, '')}</span><span className={source.syncStatus === 'failed' ? 'source-status failed' : 'source-status'}>{!source.syncEnabled ? '已暂停同步' : source.syncStatus === 'running' ? <><LoaderCircle className="spin" size={16} />同步中</> : source.syncStatus === 'failed' ? '同步失败，可重试' : source.pendingUrlChange ? '待同步新仓库' : source.lastSyncAt ? <>已同步<small>{formatTime(source.lastSyncAt)}</small></> : '等待导入'}</span><div className="source-actions"><button onClick={() => sync(source.id)} disabled={source.syncStatus === 'running' || !source.syncEnabled} aria-label={`同步 ${source.name}`}>同步</button><button onClick={(event) => { editReturnFocus.current = event.currentTarget; setFeedback(null); setEditing(source); }} aria-label={`编辑 ${source.name}`}>编辑</button><button onClick={() => toggleSync(source)} aria-label={`${source.syncEnabled ? '暂停同步' : '恢复同步'} ${source.name}`}>{source.syncEnabled ? '暂停' : '恢复'}</button><button onClick={() => remove(source.id)} aria-label={`移除 ${source.name}`}>移除</button></div>{source.pendingUrlChange ? <div className="source-change-hint">仓库链接已修改，当前仍展示上次同步内容。同步新仓库后，原标注需要复核。</div> : null}{source.lastError ? <div className="source-error">{source.lastError}</div> : null}</div>)}{!filtered.length ? <div className="table-empty">没有匹配的知识源。</div> : null}</div></> : null}
+    {editing ? <EditSourceDialog source={editing} csrf={csrf} close={closeEditor} saved={(urlChanged) => { closeEditor(); setFeedback(urlChanged ? editing.syncEnabled ? '知识源已更新。请点击同步，导入新仓库内容。' : '知识源已更新。请恢复同步，再导入新仓库内容。' : '知识源名称已更新。'); refresh(); reloadRecent(); }} /> : null}
   </div>;
 }
 

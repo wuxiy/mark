@@ -11,6 +11,7 @@ import { mirrorPath, previewGitHubSource, readAsset, readTreeFile, safeTreePath,
 import { queueSync } from './sync.ts';
 import { saveSyncIntervalMinutes, syncIntervalMinutes } from './settings.ts';
 import { OidcLogin, OidcFailure, type OidcOptions, type OidcFetch } from './oidc.ts';
+import { SourceFailure, updateSource } from './sources.ts';
 
 export interface AppOptions {
   dataDir: string;
@@ -20,6 +21,7 @@ export interface AppOptions {
   model?: ModelConfig;
   oidc?: OidcOptions;
   oidcFetch?: OidcFetch;
+  previewSource?: typeof previewGitHubSource;
 }
 
 type Session = { csrf: string; tokenHash: string };
@@ -41,6 +43,7 @@ function sessionFor(db: DatabaseSync, request: FastifyRequest): Session | null {
 function sourceView(db: DatabaseSync) {
   return db.prepare(`
     SELECT s.id, s.name, s.url, s.branch, s.published_sha AS publishedSha,
+      CASE WHEN s.published_url IS NOT NULL AND lower(s.published_url) <> lower(s.url) THEN 1 ELSE 0 END AS pendingUrlChange,
       s.sync_status AS syncStatus, s.last_error AS lastError, s.last_sync_at AS lastSyncAt,
       s.enabled, s.sync_enabled AS syncEnabled,
       (SELECT COUNT(*) FROM documents d WHERE d.source_id = s.id AND d.status = 'current') AS documentCount
@@ -55,6 +58,7 @@ export async function buildApp(options: AppOptions) {
   initializePassword(db, options.initialPasswordFile);
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
   const loginFailures = new Map<string, { count: number; until: number }>();
+  const previewSource = options.previewSource ?? previewGitHubSource;
   app.addHook('onClose', async () => { await oidc?.close(); db.close(); });
   const authConfigured = () => configured(db) || Boolean(oidc);
   const sessionCookie = (token: string, maxAge = 2592000) => `mark_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${maxAge}${options.secureCookie ? '; Secure' : ''}`;
@@ -146,8 +150,8 @@ export async function buildApp(options: AppOptions) {
     const url = (request.query as { url?: string }).url;
     if (!url) return error(reply, 400, 'INVALID_URL', '请输入 GitHub 仓库地址');
     try {
-      const preview = await previewGitHubSource(url);
-      const existing = db.prepare('SELECT id, enabled FROM sources WHERE url = ?').get(preview.url) as { id: number; enabled: number } | undefined;
+      const preview = await previewSource(url);
+      const existing = db.prepare('SELECT id, enabled FROM sources WHERE lower(url) = lower(?)').get(preview.url) as { id: number; enabled: number } | undefined;
       return { ...preview, existing: existing ? { id: existing.id, active: Boolean(existing.enabled) } : null };
     } catch (cause) {
       return error(reply, 400, 'SOURCE_UNAVAILABLE', cause instanceof Error ? cause.message : '无法访问仓库', true);
@@ -162,8 +166,8 @@ export async function buildApp(options: AppOptions) {
     const parsed = z.object({ url: z.string().min(1), name: z.string().trim().max(80).optional(), restore: z.boolean().optional() }).safeParse(request.body);
     if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '来源信息无效');
     try {
-      const preview = await previewGitHubSource(parsed.data.url);
-      const existing = db.prepare('SELECT id, enabled FROM sources WHERE url = ?').get(preview.url) as { id: number; enabled: number } | undefined;
+      const preview = await previewSource(parsed.data.url);
+      const existing = db.prepare('SELECT id, enabled FROM sources WHERE lower(url) = lower(?)').get(preview.url) as { id: number; enabled: number } | undefined;
       let id: number;
       if (existing?.enabled) return error(reply, 409, 'DUPLICATE_SOURCE', '这个来源已经在书架中');
       if (existing && !parsed.data.restore) return error(reply, 409, 'RESTORE_REQUIRED', '这个来源已移除，可以选择恢复');
@@ -176,7 +180,7 @@ export async function buildApp(options: AppOptions) {
           .run(parsed.data.name || preview.name, preview.url, preview.branch);
         id = Number(result.lastInsertRowid);
       }
-      const runId = queueSync(db, options.dataDir, id);
+      const runId = queueSync(db, options.dataDir, id, previewSource);
       return reply.code(202).send({ id, runId });
     } catch (cause) {
       return error(reply, 400, 'SOURCE_UNAVAILABLE', cause instanceof Error ? cause.message : '无法访问仓库', true);
@@ -184,12 +188,14 @@ export async function buildApp(options: AppOptions) {
   });
   app.patch('/api/sources/:id', async (request, reply) => {
     const id = routeId(request);
-    const parsed = z.object({ name: z.string().trim().min(1).max(80).optional(), syncEnabled: z.boolean().optional() })
-      .refine((value) => value.name !== undefined || value.syncEnabled !== undefined).safeParse(request.body);
+    const parsed = z.object({ name: z.string().trim().min(1).max(80).optional(), url: z.string().trim().min(1).max(2048).optional(), syncEnabled: z.boolean().optional() })
+      .strict().refine((value) => value.name !== undefined || value.url !== undefined || value.syncEnabled !== undefined).safeParse(request.body);
     if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '来源设置无效');
-    const result = db.prepare('UPDATE sources SET name = COALESCE(?, name), sync_enabled = COALESCE(?, sync_enabled) WHERE id = ? AND enabled = 1')
-      .run(parsed.data.name ?? null, parsed.data.syncEnabled === undefined ? null : Number(parsed.data.syncEnabled), id);
-    return result.changes ? { id, ...parsed.data } : error(reply, 404, 'NOT_FOUND', '来源不存在');
+    try { return await updateSource(db, id, parsed.data, previewSource); }
+    catch (cause) {
+      if (cause instanceof SourceFailure) return error(reply, cause.status, cause.code, cause.message, cause.code === 'SOURCE_UNAVAILABLE' || cause.code === 'SOURCE_BUSY');
+      throw cause;
+    }
   });
   app.delete('/api/sources/:id', async (request, reply) => {
     const id = routeId(request);
@@ -198,9 +204,10 @@ export async function buildApp(options: AppOptions) {
   });
   app.post('/api/sources/:id/sync', async (request, reply) => {
     try {
-      const runId = queueSync(db, options.dataDir, routeId(request));
+      const runId = queueSync(db, options.dataDir, routeId(request), previewSource);
       return reply.code(202).send({ runId });
     } catch (cause) {
+      if (cause instanceof SourceFailure) return error(reply, cause.status, cause.code, cause.message, true);
       const message = cause instanceof Error ? cause.message : '来源不存在';
       return error(reply, message.includes('暂停') ? 409 : 404, message.includes('暂停') ? 'SOURCE_PAUSED' : 'NOT_FOUND', message);
     }

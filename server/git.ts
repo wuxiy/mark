@@ -98,6 +98,8 @@ export async function fetchSource(dataDir: string, sourceId: number, url: string
       throw error;
     }
   } else {
+    // Keep protected historical commits while fetching from the current configured URL.
+    await git(['-C', repo, 'remote', 'set-url', 'origin', url]);
     await git(['-C', repo, 'fetch', '--no-tags', 'origin', branch]);
   }
   const sha = (await git(['-C', repo, 'rev-parse', fresh ? `refs/heads/${branch}` : 'FETCH_HEAD'])).toString('utf8').trim();

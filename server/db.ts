@@ -22,6 +22,7 @@ export function openDatabase(file: string): DatabaseSync {
       url TEXT NOT NULL UNIQUE,
       branch TEXT NOT NULL,
       published_sha TEXT,
+      published_url TEXT,
       sync_status TEXT NOT NULL DEFAULT 'queued',
       last_error TEXT,
       last_sync_at TEXT,
@@ -94,6 +95,10 @@ export function openDatabase(file: string): DatabaseSync {
   `);
   const sourceColumns = db.prepare('PRAGMA table_info(sources)').all() as Array<{ name: string }>;
   if (!sourceColumns.some((column) => column.name === 'sync_enabled')) db.exec('ALTER TABLE sources ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 1');
+  if (!sourceColumns.some((column) => column.name === 'published_url')) {
+    db.exec('ALTER TABLE sources ADD COLUMN published_url TEXT');
+    db.exec('UPDATE sources SET published_url = url WHERE published_sha IS NOT NULL');
+  }
   // A stopped process cannot leave a task pretending to run. The published SHA stays unchanged.
   db.exec(`
     UPDATE sync_runs SET status = 'failed', stage = 'interrupted',

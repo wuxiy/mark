@@ -12,12 +12,13 @@ export interface Source {
   url: string;
   branch: string;
   publishedSha: string | null;
-  syncStatus: 'queued' | 'running' | 'ready' | 'failed';
+  syncStatus: 'queued' | 'pending' | 'running' | 'ready' | 'failed';
   lastError: string | null;
   lastSyncAt: string | null;
   enabled: number;
   syncEnabled: number;
   documentCount: number;
+  pendingUrlChange: number;
 }
 
 export interface DocumentSummary {
