@@ -24,13 +24,15 @@ export function normalizeModelUrl(input: string): string {
   return url.toString().replace(/\/+$/, '');
 }
 
-export async function completeModel(config: ModelConfig, messages: Array<{ role: 'system' | 'user'; content: string }>): Promise<string> {
+export async function completeModel(config: ModelConfig, messages: Array<{ role: 'system' | 'user'; content: string }>, callerSignal?: AbortSignal): Promise<string> {
   const baseUrl = normalizeModelUrl(config.baseUrl ?? '');
   if (!config.model?.trim()) throw new ModelFailure('MODEL_CONFIG_INVALID', '请填写模型名称', 400);
   let response: Response;
   let payload: unknown;
-  const signal = AbortSignal.timeout(config.timeoutMs ?? 25_000);
+  const timeout = AbortSignal.timeout(config.timeoutMs ?? 25_000);
+  const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
   try {
+    signal.throwIfAborted();
     response = await (config.fetcher ?? fetch)(`${baseUrl}/chat/completions`, {
       method: 'POST', signal, redirect: 'error',
       headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}) },
@@ -38,6 +40,7 @@ export async function completeModel(config: ModelConfig, messages: Array<{ role:
     });
     if (response.ok) payload = await response.json();
   } catch (cause) {
+    if (callerSignal?.aborted) throw new ModelFailure('MODEL_CANCELLED', '生成已取消', 499);
     if (signal.aborted || (cause instanceof Error && cause.name === 'TimeoutError')) throw new ModelFailure('MODEL_TIMEOUT', '模型请求超时，请检查接入地址或稍后重试');
     if (cause instanceof SyntaxError) throw new ModelFailure('MODEL_RESPONSE_INVALID', '模型服务未返回有效 JSON，请检查兼容接口', 502);
     throw new ModelFailure('MODEL_UNAVAILABLE', '无法连接模型服务，请检查接入地址和网络');

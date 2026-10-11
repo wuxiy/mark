@@ -89,7 +89,15 @@ export interface SyncSettings { intervalMinutes: number }
 
 export interface AskAnswer {
   answer: string;
-  citations: Array<{ number: number; documentId: number; title: string; path: string; sourceName: string; publishedSha: string; snippet: string }>;
+  contextNote: string;
+  citations: Array<{ number: number; documentId: number; sourceId: number; title: string; path: string; sourceName: string; publishedSha: string; snippet: string }>;
+  reviewMarks?: Array<{ id: number; exact: string; anchorStatus: string }>;
+  omittedMarks?: number;
+}
+
+export interface VersionDocument {
+  documentId: number; sourceId: number; sourceName: string; title: string; path: string;
+  publishedSha: string; markdown: string; plainText: string; isCurrent: boolean; sourceEnabled: boolean;
 }
 
 export interface SearchResult {

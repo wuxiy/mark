@@ -152,12 +152,12 @@ test('reader API keeps marks, recent reading, assets, Chinese search and histori
     assert.equal((await app.inject({ method: 'PATCH', url: '/api/sources/1', headers: { cookie, 'x-csrf-token': csrf }, payload: { syncEnabled: false } })).statusCode, 200);
     assert.equal((await get('/api/sources')).json()[0].syncEnabled, 0);
     assert.equal((await app.inject({ method: 'POST', url: '/api/sources/1/sync', headers: { cookie, 'x-csrf-token': csrf } })).statusCode, 409);
-    await assert.rejects(() => answerQuestion(db, {}, '知识学习'), (cause) => cause instanceof AskFailure && cause.code === 'MODEL_NOT_CONFIGURED');
+    await assert.rejects(() => answerQuestion(db, {}, '知识学习', doc.id), (cause) => cause instanceof AskFailure && cause.code === 'MODEL_NOT_CONFIGURED');
     const answer = await answerQuestion(db, { baseUrl: 'https://example.invalid/v1', model: 'fixture', fetcher: async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '文档提到知识学习。[1]' } }] }), { status: 200 }) }, '知识学习');
+      new Response(JSON.stringify({ choices: [{ message: { content: '文档提到知识学习。[1]' } }] }), { status: 200 }) }, '知识学习', doc.id);
     assert.equal(answer.citations[0].documentId, doc.id);
     await assert.rejects(() => answerQuestion(db, { baseUrl: 'https://example.invalid/v1', model: 'fixture', fetcher: async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '没有依据的答案。[9]' } }] }), { status: 200 }) }, '知识学习'),
+      new Response(JSON.stringify({ choices: [{ message: { content: '没有依据的答案。[9]' } }] }), { status: 200 }) }, '知识学习', doc.id),
     (cause) => cause instanceof AskFailure && cause.code === 'INVALID_CITATION');
     assert.equal((await app.inject({ method: 'DELETE', url: '/api/sources/1', headers: { cookie, 'x-csrf-token': csrf } })).statusCode, 200);
     assert.equal((await get('/api/marks')).json().annotations[0].note, '测试笔记');

@@ -4,7 +4,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { z } from 'zod';
-import { answerQuestion, askConfigured, AskFailure, type ModelConfig } from './ask.ts';
+import { answerQuestion, askConfigured, explainSelection, explainUpdate, AskFailure, type ModelConfig } from './ask.ts';
+import { readChange, readVersion } from './evidence.ts';
 import { configured, cookieToken, createSession, deleteSession, getSession, initializePassword, verifyPassword } from './auth.ts';
 import { openDatabase } from './db.ts';
 import { mirrorPath, previewGitHubSource, readAsset, readTreeFile, safeTreePath, summarizeMarkdown } from './git.ts';
@@ -60,6 +61,18 @@ export async function buildApp(options: AppOptions) {
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
   const loginFailures = new Map<string, { count: number; until: number }>();
   const previewSource = options.previewSource ?? previewGitHubSource;
+  async function modelRequest(request: FastifyRequest, reply: FastifyReply, work: (signal: AbortSignal) => Promise<unknown>) {
+    const controller = new AbortController();
+    const disconnect = () => { if (!reply.raw.writableEnded) controller.abort(); };
+    request.raw.on('aborted', disconnect);
+    reply.raw.on('close', disconnect);
+    try { return await work(controller.signal); }
+    catch (cause) {
+      if (controller.signal.aborted) return;
+      if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500 || cause.status === 429);
+      return error(reply, 503, 'MODEL_UNAVAILABLE', '生成暂时不可用，请稍后重试', true);
+    } finally { request.raw.off('aborted', disconnect); reply.raw.off('close', disconnect); }
+  }
   app.addHook('onClose', async () => { await oidc?.close(); db.close(); });
   const authConfigured = () => configured(db) || Boolean(oidc);
   const sessionCookie = (token: string, maxAge = 2592000) => `mark_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${maxAge}${options.secureCookie ? '; Secure' : ''}`;
@@ -260,6 +273,29 @@ export async function buildApp(options: AppOptions) {
       return error(reply, 404, 'ASSET_MISSING', '资源不存在');
     }
   });
+  const versionQuery = z.object({ sha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/), path: z.string().max(2048).optional(), asset: z.string().max(2048).optional() });
+  app.get('/api/documents/:id/version', async (request, reply) => {
+    const parsed = versionQuery.safeParse(request.query);
+    if (!parsed.success) return error(reply, 400, 'INVALID_VERSION', '版本或路径无效');
+    try { return await readVersion(db, options.dataDir, routeId(request), parsed.data.sha, parsed.data.path); }
+    catch (cause) { if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500); throw cause; }
+  });
+  app.get('/api/documents/:id/version/assets', async (request, reply) => {
+    const parsed = versionQuery.safeParse(request.query);
+    if (!parsed.success || !parsed.data.asset || parsed.data.asset.startsWith('/') || parsed.data.asset.includes('://')) return error(reply, 400, 'INVALID_PATH', '资源路径无效');
+    try {
+      const doc = await readVersion(db, options.dataDir, routeId(request), parsed.data.sha, parsed.data.path);
+      const path = posix.normalize(posix.join(posix.dirname(doc.path), parsed.data.asset));
+      const bytes = await readAsset(mirrorPath(options.dataDir, doc.sourceId), doc.publishedSha, path);
+      const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+      return reply.type(mime[extname(path).toLowerCase()] ?? 'application/octet-stream').header('X-Content-Type-Options', 'nosniff').send(bytes);
+    } catch (cause) { if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message); return error(reply, 404, 'ASSET_MISSING', '该版本的资源不存在'); }
+  });
+  app.post('/api/documents/:id/explain', async (request, reply) => {
+    const parsed = z.object({ publishedSha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/), exact: z.string().trim().min(1).max(2000), approxOffset: z.number().int().nonnegative().optional() }).strict().safeParse(request.body);
+    if (!parsed.success) return error(reply, 400, 'INVALID_SELECTION', '请选择 1–2000 字符的正文，并保留文档版本');
+    return modelRequest(request, reply, signal => explainSelection(db, resolveModelConfig(db, options.model), routeId(request), { ...parsed.data, dataDir: options.dataDir, signal }));
+  });
   app.get('/api/documents/:id/personal', async (request, reply) => {
     const id = routeId(request);
     const visible = db.prepare('SELECT 1 FROM documents d JOIN sources s ON s.id = d.source_id WHERE d.id = ? AND s.enabled = 1').get(id);
@@ -361,22 +397,13 @@ export async function buildApp(options: AppOptions) {
     const runId = routeId(request);
     const documentId = Number((request.query as { documentId?: string }).documentId);
     if (!Number.isSafeInteger(documentId) || documentId <= 0) return error(reply, 400, 'INVALID_INPUT', '文档标识无效');
-    const change = db.prepare(`SELECT c.kind, c.old_path AS oldPath, c.new_path AS newPath,
-      r.from_sha AS fromSha, r.to_sha AS toSha, r.source_id AS sourceId, d.title, s.name AS sourceName
-      FROM document_changes c JOIN sync_runs r ON r.id = c.sync_run_id
-      JOIN documents d ON d.id = c.document_id JOIN sources s ON s.id = r.source_id
-      WHERE c.sync_run_id = ? AND c.document_id = ? AND r.status = 'success'`).get(runId, documentId) as
-      | { kind: string; oldPath: string | null; newPath: string | null; fromSha: string | null; toSha: string; sourceId: number; title: string; sourceName: string }
-      | undefined;
-    if (!change) return error(reply, 404, 'NOT_FOUND', '更新记录不存在');
-    try {
-      const repo = mirrorPath(options.dataDir, change.sourceId);
-      const before = change.fromSha && change.oldPath ? (await readTreeFile(repo, change.fromSha, change.oldPath)).toString('utf8') : '';
-      const after = change.newPath ? (await readTreeFile(repo, change.toSha, change.newPath)).toString('utf8') : '';
-      return { ...change, before, after, documentId, runId };
-    } catch {
-      return error(reply, 503, 'VERSION_UNAVAILABLE', '暂时无法读取历史版本，请重试', true);
-    }
+    try { return await readChange(db, options.dataDir, runId, documentId); }
+    catch (cause) { if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500); throw cause; }
+  });
+  app.post('/api/updates/:id/explain', async (request, reply) => {
+    const parsed = z.object({ documentId: z.number().int().positive() }).strict().safeParse(request.body);
+    if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '文档标识无效');
+    return modelRequest(request, reply, signal => explainUpdate(db, options.dataDir, resolveModelConfig(db, options.model), routeId(request), parsed.data.documentId, signal));
   });
   app.get('/api/search', async (request, reply) => {
     const params = request.query as { q?: string; sourceId?: string };
@@ -422,14 +449,17 @@ export async function buildApp(options: AppOptions) {
     return { configured: askConfigured(config), enabled: config.enabled, model: config.model || null };
   });
   app.post('/api/ask', async (request, reply) => {
-    const parsed = z.object({ question: z.string().trim().min(2).max(1_000), documentId: z.number().int().positive().optional() }).safeParse(request.body);
-    if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '请输入问题');
-    try {
-      return await answerQuestion(db, resolveModelConfig(db, options.model), parsed.data.question, parsed.data.documentId);
-    } catch (cause) {
-      if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500 || cause.status === 429);
-      return error(reply, 503, 'MODEL_UNAVAILABLE', '问答暂时不可用，请稍后重试', true);
-    }
+    const parsed = z.object({
+      question: z.string().trim().min(2).max(1000), scope: z.enum(['document', 'sources']).optional(),
+      documentId: z.number().int().positive().optional(),
+      publishedSha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/).optional(),
+      sourceIds: z.array(z.number().int().positive()).min(1).max(3).optional(),
+    }).strict().refine(value => value.scope === 'sources'
+      ? Boolean(value.sourceIds?.length && new Set(value.sourceIds).size === value.sourceIds.length && !value.documentId && !value.publishedSha)
+      : Boolean(value.documentId && !value.sourceIds)).safeParse(request.body);
+    if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '请输入问题，并选择本篇文档或 1–3 个来源');
+    return modelRequest(request, reply, signal => answerQuestion(db, resolveModelConfig(db, options.model), parsed.data.question, parsed.data.documentId,
+      { dataDir: options.dataDir, publishedSha: parsed.data.publishedSha, sourceIds: parsed.data.sourceIds, signal }));
   });
 
   if (options.webDir && existsSync(options.webDir)) {
