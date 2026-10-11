@@ -16,6 +16,7 @@ Mark 面向单用户、电脑 Web 浏览器。一个知识源对应一个公开 
 - **留下标记**：保存划线、笔记、书签、阅读进度和手动设置的完成状态；上游内容变化后，无法可靠定位的标注进入待复核。
 - **跟进更新**：手动或定时同步来源，查看新增、修改、删除的文档和前后版本差异；可暂停、恢复或移除来源。
 - **找回内容**：跨来源按关键词搜索当前文档；可选 Ask 在配置兼容模型后，基于检索片段回答并列出文档引用。
+- **界面接入 LLM**：在 Settings 配置地址、模型和密钥，测试连接后保存即可供 Ask 使用，无需重启；支持停用、密钥保持或清除。
 - **统一登录**：可接入 Work-OS authentik，使用同一 Owner 身份；保留 Mark 密码登录和应用内单独退出。
 
 ## 快速开始
@@ -56,8 +57,10 @@ npm run dev:web
 | `MARK_INITIAL_PASSWORD_FILE` | 首次初始化时读取的密码文件 | 未设置 |
 | `MARK_SYNC_INTERVAL_MINUTES` | 新数据库的初始同步间隔，之后在 Settings 调整；`0` 关闭定时检查 | `60` |
 | `MARK_SECURE_COOKIE` | 经 HTTPS 访问时设为 `1` | `0` |
-| `MARK_MODEL_BASE_URL` / `MARK_MODEL_NAME` | 同时设置后启用兼容 Chat Completions 的 Ask | 未设置 |
-| `MARK_MODEL_API_KEY` | 模型服务要求密钥时设置 | 未设置 |
+| `MARK_MODEL_BASE_URL` / `MARK_MODEL_NAME` | 尚未保存界面配置时，作为 Ask 的初始地址和模型 | 未设置 |
+| `MARK_MODEL_API_KEY` | 初始模型密钥；无需认证的服务可留空 | 未设置 |
+
+**LLM 配置入口：Settings → LLM 接入。** 填写 API 基础地址（如 `/v1`，不要包含 `/chat/completions`）和服务提供的模型 ID。测试连接只发送一条测试消息，不保存配置；点击“保存配置”后立即生效，重启后保留。界面保存的整份配置优先于 `MARK_MODEL_*`，包括停用和清空密钥。已有密钥留空保持，更换地址须重新填写或明确清除。增强功能规划与验收见 [LLM 接入与增强规划](docs/LLM_PLAN.md)。
 
 Linux 主机完成构建后，可以让页面与 API 由同一进程在 `13200` 端口提供：
 
@@ -79,7 +82,7 @@ HOST=0.0.0.0 PORT=13200 MARK_DATA_DIR=./data MARK_INITIAL_PASSWORD_FILE=secrets/
 | `npm run build` | 检查类型并构建页面与 API |
 | `npm start` | 启动已构建的同源 Web 服务 |
 
-当前代码已通过 `npm run build` 和 `npm test`（34 项通过、0 项跳过，包含知识源修改、实际 Git 仓库切换及 OIDC 异常用例）。本轮使用可控本地 Git 仓库，在 Chromium 的 1440×960、1280×900 视口验证了编辑、取消、加载状态、失败提示、保存与新仓库同步；此前对两个公开仓库做过导入、阅读和跨来源英文搜索的局部检查。这些结果不能代替多来源长期同步、外部模型和备份恢复的完整验收。电脑宽屏浏览器是当前设计范围。
+当前代码已通过 `npm run build` 和 `npm test`（44 项通过、0 项跳过，包含模型配置持久化、即时生效、连接异常及既有来源和 OIDC 用例）。2026-10-11 使用本地 Git 资料与模拟模型服务，在 Chromium 的 1440×960、1280×900 视口验证了配置、测试、保存、刷新、密钥错误与重试、清除、停用及 Reader Ask 引用；首次读取和保存失败也有独立检查。此前已局部验证知识源修改及两个公开仓库的导入、阅读和跨来源英文搜索。这些结果不能代替真实模型服务、多来源长期同步和备份恢复验收。电脑宽屏浏览器是当前设计范围。
 
 ## 项目文档
 
@@ -90,3 +93,4 @@ HOST=0.0.0.0 PORT=13200 MARK_DATA_DIR=./data MARK_INITIAL_PASSWORD_FILE=secrets/
 | [设计文档](DESIGN.md) | 阅读器交互与视觉规范 |
 | [Web 原型](PROTOTYPE.md) | 页面结构、流程与状态设计 |
 | [实施与验收清单](IMPLEMENTATION_PLAN.md) | 分阶段工作和 A01–A16 验收项 |
+| [LLM 接入与增强规划](docs/LLM_PLAN.md) | 已实现的配置契约、增强阶段、异常与验收清单 |

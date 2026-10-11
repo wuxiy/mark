@@ -12,6 +12,7 @@ import { queueSync } from './sync.ts';
 import { saveSyncIntervalMinutes, syncIntervalMinutes } from './settings.ts';
 import { OidcLogin, OidcFailure, type OidcOptions, type OidcFetch } from './oidc.ts';
 import { SourceFailure, updateSource } from './sources.ts';
+import { modelSettingsInput, modelSettingsView, resolveModelConfig, saveModelSettings, testModelSettings } from './model-settings.ts';
 
 export interface AppOptions {
   dataDir: string;
@@ -397,14 +398,36 @@ export async function buildApp(options: AppOptions) {
       return { ...row, snippet: body.slice(Math.max(0, index - 45), Math.max(0, index - 45) + 150) };
     }) };
   });
-  app.get('/api/ask/status', async () => ({ configured: askConfigured(options.model ?? {}), model: options.model?.model ?? null }));
+  app.get('/api/settings/model', async () => modelSettingsView(db, options.model));
+  app.patch('/api/settings/model', async (request, reply) => {
+    const parsed = modelSettingsInput.safeParse(request.body);
+    if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '模型配置无效，请检查字段');
+    try { return saveModelSettings(db, options.model ?? {}, parsed.data); }
+    catch (cause) {
+      if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message);
+      throw cause;
+    }
+  });
+  app.post('/api/settings/model/test', async (request, reply) => {
+    const parsed = modelSettingsInput.safeParse(request.body);
+    if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '模型配置无效，请检查字段');
+    try { return await testModelSettings(db, options.model ?? {}, parsed.data); }
+    catch (cause) {
+      if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500 || cause.status === 429);
+      return error(reply, 503, 'MODEL_UNAVAILABLE', '连接测试失败，请检查配置后重试', true);
+    }
+  });
+  app.get('/api/ask/status', async () => {
+    const config = resolveModelConfig(db, options.model);
+    return { configured: askConfigured(config), enabled: config.enabled, model: config.model || null };
+  });
   app.post('/api/ask', async (request, reply) => {
     const parsed = z.object({ question: z.string().trim().min(2).max(1_000), documentId: z.number().int().positive().optional() }).safeParse(request.body);
     if (!parsed.success) return error(reply, 400, 'INVALID_INPUT', '请输入问题');
     try {
-      return await answerQuestion(db, options.model ?? {}, parsed.data.question, parsed.data.documentId);
+      return await answerQuestion(db, resolveModelConfig(db, options.model), parsed.data.question, parsed.data.documentId);
     } catch (cause) {
-      if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500);
+      if (cause instanceof AskFailure) return error(reply, cause.status, cause.code, cause.message, cause.status >= 500 || cause.status === 429);
       return error(reply, 503, 'MODEL_UNAVAILABLE', '问答暂时不可用，请稍后重试', true);
     }
   });

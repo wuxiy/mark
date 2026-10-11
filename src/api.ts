@@ -76,7 +76,15 @@ export interface DocumentDiff {
   after: string;
 }
 
-export interface AskStatus { configured: boolean; model: string | null }
+export interface AskStatus { configured: boolean; enabled: boolean; model: string | null }
+export interface ModelSettingsState {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  revision: number;
+  source: 'saved' | 'environment' | 'none';
+}
 export interface SyncSettings { intervalMinutes: number }
 
 export interface AskAnswer {

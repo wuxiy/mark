@@ -236,6 +236,23 @@ a { color: inherit; text-decoration: none; }
 .setting-row label { min-width: 78px; color: #374151; font-weight: 600; }
 .setting-row select { min-width: 230px; border: 1px solid #d5dbe2; border-radius: 6px; padding: 10px 12px; color: #263238; background: #fff; font: inherit; }
 .setting-row .secondary-button { height: 41px; }
+.model-settings-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.model-config-status { color: #657080; font-size: 13px; overflow-wrap: anywhere; }
+.settings-section .model-config-origin { font-size: 13px; color: #657080; }
+.model-field { margin-top: 22px; }
+.model-field > label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 9px; }
+.model-field > input { width: 100%; height: 43px; padding: 0 12px; border: 1px solid #cfd6df; border-radius: 6px; color: #2d3541; background: #fff; font: inherit; }
+.model-field > input:focus { outline: 2px solid #e2f2ed; border-color: #147d68; }
+.model-field small { display: block; color: #657080; font-size: 12px; line-height: 1.6; margin-top: 7px; }
+.model-switch { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+.model-switch input { width: 16px; height: 16px; accent-color: #147d68; }
+.model-key-clear { margin-top: 12px; color: #657080; font-size: 13px; }
+.settings-section .model-data-hint { font-size: 12px; line-height: 1.7; margin-top: 24px; }
+.settings-section .model-feedback { font-size: 13px; color: #147d68; }
+.model-actions { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+.model-actions .primary-button, .model-actions .secondary-button { height: 40px; font-size: 13px; }
+.model-reset { border: 0; background: none; color: #657080; padding: 10px; font: inherit; font-size: 13px; }
+.model-reset:disabled { opacity: .45; cursor: default; }
 .ask-panel { position: fixed; z-index: 20; top: 67px; right: 0; bottom: 0; width: 440px; overflow-y: auto; padding: 27px; background: #fff; border-left: 1px solid #dfe4e8; box-shadow: -12px 0 32px rgba(23, 36, 45, .1); }
 .ask-head { display: flex; align-items: center; justify-content: space-between; }
 .ask-head h2 { font-size: 25px; margin: 0; }

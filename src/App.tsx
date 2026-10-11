@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { BookOpen, Bookmark, Check, ChevronRight, CircleAlert, FileText, GitBranch, LoaderCircle, MessageCircle, Plus, Search, Settings, X } from 'lucide-react';
-import { formatTime, request, type Annotation, type AskAnswer, type AskStatus, type DocumentDetail, type DocumentDiff, type DocumentSummary, type MarksState, type PersonalState, type RecentDocument, type SearchResult, type SessionInfo, type Source, type SourceDocuments, type SyncSettings, type UpdateRun } from './api';
+import { formatTime, request, type Annotation, type AskAnswer, type AskStatus, type DocumentDetail, type DocumentDiff, type DocumentSummary, type MarksState, type ModelSettingsState, type PersonalState, type RecentDocument, type SearchResult, type SessionInfo, type Source, type SourceDocuments, type SyncSettings, type UpdateRun } from './api';
 import { paintHighlights } from './highlights';
 import { lineChanges } from './diff';
 
@@ -478,8 +478,70 @@ function Marks({ csrf }: { csrf: string | null }) {
   return <div className="page"><div className="page-head"><div><h1>My Marks</h1><p>回访你的划线、笔记与书签</p></div></div><div className="mark-tabs"><button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>全部</button><button className={tab === 'highlights' ? 'active' : ''} onClick={() => setTab('highlights')}>划线</button><button className={tab === 'notes' ? 'active' : ''} onClick={() => setTab('notes')}>笔记</button><button className={tab === 'bookmarks' ? 'active' : ''} onClick={() => setTab('bookmarks')}>书签</button><button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}>需要复核</button></div>{loading && !data ? <Skeleton rows={5} /> : null}{message ? <Notice message={message} retry={reload} /> : null}{tab === 'bookmarks' ? <div className="document-list">{data?.bookmarks.map((item) => <BookmarkItem key={item.documentId} item={item} />)}{!loading && !data?.bookmarks.length ? <div className="simple-empty">还没有书签。阅读文档时可以添加。</div> : null}</div> : <><div className="marks-layout"><div className="marks-list">{annotations.map((mark) => <button key={mark.id} className={selected?.id === mark.id ? 'active' : ''} onClick={() => { setSelectedId(mark.id); setDraft(null); setSaveError(null); }}><span className={`mark-dot ${mark.color}`} /><span><strong>{mark.exact}</strong><small>{mark.sourceName} / {mark.title}</small>{!mark.sourceEnabled || mark.documentStatus !== 'current' ? <em>来源已移除</em> : mark.anchorStatus === 'needs_review' ? <em>需要复核</em> : null}</span></button>)}{!loading && !annotations.length ? <div className="simple-empty">{tab === 'review' ? '没有需要复核的标注。' : '还没有标注。阅读时选中文字即可添加。'}</div> : null}</div>{selected ? <div className="mark-detail"><div className="eyeline">{selected.sourceName} / {selected.path}</div><blockquote>{selected.exact}</blockquote>{!selected.sourceEnabled || selected.documentStatus !== 'current' ? <Notice message="原文已从当前来源移除；摘录和笔记仍保留。" /> : selected.anchorStatus === 'needs_review' ? <Notice message="这条标注需要复核；原文和笔记已保留。" /> : null}<label htmlFor="mark-note">笔记</label><textarea id="mark-note" value={draft ?? selected.note} onChange={(event) => setDraft(event.target.value)} placeholder="写下你的想法…" />{saveError ? <Notice message={saveError} /> : null}<div className="mark-detail-actions"><button className="primary-button" onClick={save} disabled={draft === null}>保存笔记</button>{selected.sourceEnabled && selected.documentStatus === 'current' ? <button className="secondary-button" onClick={() => navigate(`/read/${selected.documentId}${selected.anchorStatus === 'needs_review' ? `?reanchor=${selected.id}` : ''}`)}>{selected.anchorStatus === 'needs_review' ? '前往复核' : '回到文档'}</button> : <NavLink className="secondary-button" to="/updates">查看历史更新</NavLink>}<button className="text-danger" onClick={remove}>删除标注</button></div></div> : null}</div>{tab === 'all' && data?.bookmarks.length ? <section className="all-bookmarks"><h2>书签</h2><div className="document-list">{data.bookmarks.map((item) => <BookmarkItem key={item.documentId} item={item} />)}</div></section> : null}</>}</div>;
 }
 
+function modelUrlIdentity(value: string): string {
+  try { return new URL(value.trim()).toString().replace(/\/+$/, ''); }
+  catch { return value.trim(); }
+}
+
+function ModelSettings({ csrf }: { csrf: string | null }) {
+  const { data, loading, message, reload } = useApiState<ModelSettingsState>('/settings/model');
+  const [saved, setSaved] = useState<ModelSettingsState | null>(null);
+  const [draft, setDraft] = useState<{ enabled: boolean; baseUrl: string; model: string; apiKey: string; clearApiKey: boolean } | null>(null);
+  const [pending, setPending] = useState<'save' | 'test' | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const current = saved ?? data;
+  if (message && !current) return <section className="settings-section"><h2>LLM 接入</h2><Notice message={message} retry={reload} /></section>;
+  if (loading && !current) return <section className="settings-section"><h2>LLM 接入</h2><Skeleton rows={3} /></section>;
+  if (!current) return <section className="settings-section"><h2>LLM 接入</h2><Notice message={message ?? '无法读取模型配置'} retry={reload} /></section>;
+  const initial = { enabled: current.enabled, baseUrl: current.baseUrl, model: current.model, apiKey: '', clearApiKey: false };
+  const form = draft ?? initial;
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+  const busy = pending !== null;
+  const incomplete = !form.baseUrl.trim() || !form.model.trim();
+  const addressChanged = modelUrlIdentity(form.baseUrl) !== modelUrlIdentity(current.baseUrl);
+  const needsKey = addressChanged && current.apiKeyConfigured && !form.apiKey.trim() && !form.clearApiKey;
+  function change(next: Partial<typeof form>) { setDraft(previous => ({ ...(previous ?? initial), ...next })); setFeedback(null); setFailure(null); }
+  function payload() { return { ...form, apiKey: form.apiKey.trim() || undefined, revision: current!.revision }; }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy || !dirty || needsKey || (form.enabled && incomplete)) return;
+    setPending('save'); setFeedback(null); setFailure(null);
+    try {
+      const result = await request<ModelSettingsState>('/settings/model', { method: 'PATCH', body: JSON.stringify(payload()) }, csrf);
+      setSaved(result); setDraft(null);
+      setFeedback(result.enabled ? '模型配置已保存，Ask 已即时生效，无需重启。' : '模型功能已关闭，配置已保留。阅读和搜索仍可使用。');
+    } catch (cause) { setFailure(cause instanceof Error ? cause.message : '保存失败，请重试'); }
+    finally { setPending(null); }
+  }
+  async function testConnection(event: MouseEvent<HTMLButtonElement>) {
+    if (busy || incomplete || needsKey || !event.currentTarget.form?.reportValidity()) return;
+    setPending('test'); setFeedback(null); setFailure(null);
+    try {
+      const result = await request<{ ok: boolean; model: string; latencyMs: number }>('/settings/model/test', { method: 'POST', body: JSON.stringify(payload()) }, csrf);
+      setFeedback(`连接测试成功：${result.model}，耗时 ${(result.latencyMs / 1000).toFixed(1)} 秒。${dirty ? '当前修改尚未保存。' : ''}`);
+    } catch (cause) { setFailure(cause instanceof Error ? cause.message : '连接测试失败，请重试'); }
+    finally { setPending(null); }
+  }
+  function reset() { setDraft(null); setFailure(null); setFeedback(null); }
+  return <section className="settings-section model-settings" aria-labelledby="model-settings-title">
+    <div className="model-settings-heading"><h2 id="model-settings-title">LLM 接入</h2><span className="model-config-status">{current.enabled && current.baseUrl && current.model ? `已配置 · ${current.model}` : current.model ? '已停用' : '未配置'}</span></div>
+    <p>使用兼容 Chat Completions 的模型服务，为 Ask 提供基于文档的回答。</p>
+    {current.source === 'environment' ? <p className="model-config-origin">当前使用部署配置；保存后，界面设置优先。</p> : null}
+    <form onSubmit={submit} aria-busy={busy}>
+      <label className="model-switch"><input type="checkbox" checked={form.enabled} disabled={busy} onChange={event => change({ enabled: event.target.checked })} />启用模型功能</label>
+      <div className="model-field"><label htmlFor="model-base-url">API 接入地址</label><input id="model-base-url" type="url" required={form.enabled} maxLength={2048} value={form.baseUrl} disabled={busy} onChange={event => change({ baseUrl: event.target.value })} placeholder="https://api.example.com/v1" aria-describedby="model-url-help" /><small id="model-url-help">填写 API 基础地址，保留服务要求的路径（如 /v1），不要包含 /chat/completions。</small></div>
+      <div className="model-field"><label htmlFor="model-name">模型名称</label><input id="model-name" required={form.enabled} maxLength={160} value={form.model} disabled={busy} onChange={event => change({ model: event.target.value })} placeholder="填写服务提供的模型 ID" /></div>
+      <div className="model-field"><label htmlFor="model-api-key">API 密钥 <span className="optional">（按服务要求填写）</span></label><input id="model-api-key" type="password" autoComplete="new-password" maxLength={8192} value={form.apiKey} disabled={busy || form.clearApiKey} onChange={event => change({ apiKey: event.target.value })} placeholder={current.apiKeyConfigured && !addressChanged ? '已设置，留空保持原密钥' : '无需密钥的服务可留空'} aria-describedby="model-key-help" /><small id="model-key-help">{needsKey ? '接入地址已修改，请重新填写密钥，或勾选清除密钥。' : '密钥只保存在服务端，保存后不回显。'}</small>{current.apiKeyConfigured ? <label className="model-switch model-key-clear"><input type="checkbox" checked={form.clearApiKey} disabled={busy} onChange={event => change({ clearApiKey: event.target.checked, apiKey: '' })} />清除已保存的密钥，使用无需密钥的服务</label> : null}</div>
+      <p className="model-data-hint">连接测试只发送一条简短测试消息；Ask 会发送检索到的相关文档片段。测试会调用模型服务，但不会保存配置。</p>
+      {failure ? <Notice message={failure} /> : null}
+      {feedback ? <p className="model-feedback" role="status">{feedback}</p> : null}
+      <div className="model-actions"><button className="primary-button" disabled={busy || !dirty || needsKey || (form.enabled && incomplete)}>{pending === 'save' ? '保存中…' : '保存配置'}</button><button type="button" className="secondary-button" disabled={busy || incomplete || needsKey} onClick={testConnection}>{pending === 'test' ? '测试中…' : '测试连接'}</button><button type="button" className="model-reset" disabled={busy || !dirty} onClick={reset}>放弃修改</button></div>
+    </form>
+  </section>;
+}
+
 function SettingsPage({ logout, csrf }: { logout: () => void; csrf: string | null }) {
-  const { data: askStatus, loading: askLoading, message: askMessage, reload: reloadAsk } = useApiState<AskStatus>('/ask/status');
   const { data: syncSettings, loading: syncLoading, message: syncMessage, reload: reloadSync } = useApiState<SyncSettings>('/settings/sync');
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -497,7 +559,7 @@ function SettingsPage({ logout, csrf }: { logout: () => void; csrf: string | nul
       setSaveMessage(error instanceof Error ? error.message : '保存失败');
     } finally { setSaving(false); }
   }
-  return <div className="page"><div className="page-head"><div><h1>Settings</h1><p>管理你的个人知识库</p></div></div><div className="settings-section"><h2>自动同步</h2>{syncLoading && !syncSettings ? <Skeleton rows={1} /> : syncMessage && !syncSettings ? <Notice message={syncMessage} retry={reloadSync} /> : <><p>设定所有未暂停知识源的检查频率。单个知识源仍可在书架中暂停。</p><div className="setting-row"><label htmlFor="sync-interval">检查间隔</label><select id="sync-interval" value={draft ?? String(syncSettings?.intervalMinutes ?? 60)} onChange={(event) => { setDraft(event.target.value); setSaveMessage(null); }}><option value="0">关闭自动同步</option><option value="15">每 15 分钟</option><option value="30">每 30 分钟</option><option value="60">每小时</option><option value="180">每 3 小时</option><option value="360">每 6 小时</option><option value="1440">每天</option></select><button className="secondary-button" onClick={saveSync} disabled={draft === null || saving}>{saving ? '保存中…' : '保存'}</button></div>{saveMessage ? <p role="status">{saveMessage}</p> : null}</>}</div><div className="settings-section"><h2>账户</h2><button className="secondary-button" onClick={logout}>退出登录</button></div><div className="settings-section"><h2>Ask</h2>{askLoading && !askStatus ? <Skeleton rows={1} /> : askMessage && !askStatus ? <Notice message={askMessage} retry={reloadAsk} /> : <p>{askStatus?.configured ? `已连接模型：${askStatus.model}` : '尚未配置模型。管理员完成部署配置后，问答功能即可使用。'}</p>}</div><div className="settings-section"><h2>数据</h2><p>知识源和个人记录保存在当前部署的数据目录中。完整备份需同时包含数据库与 Git 镜像。</p></div></div>;
+  return <div className="page"><div className="page-head"><div><h1>Settings</h1><p>管理你的个人知识库</p></div></div><ModelSettings csrf={csrf} /><div className="settings-section"><h2>自动同步</h2>{syncLoading && !syncSettings ? <Skeleton rows={1} /> : syncMessage && !syncSettings ? <Notice message={syncMessage} retry={reloadSync} /> : <><p>设定所有未暂停知识源的检查频率。单个知识源仍可在书架中暂停。</p><div className="setting-row"><label htmlFor="sync-interval">检查间隔</label><select id="sync-interval" value={draft ?? String(syncSettings?.intervalMinutes ?? 60)} onChange={(event) => { setDraft(event.target.value); setSaveMessage(null); }}><option value="0">关闭自动同步</option><option value="15">每 15 分钟</option><option value="30">每 30 分钟</option><option value="60">每小时</option><option value="180">每 3 小时</option><option value="360">每 6 小时</option><option value="1440">每天</option></select><button className="secondary-button" onClick={saveSync} disabled={draft === null || saving}>{saving ? '保存中…' : '保存'}</button></div>{saveMessage ? <p role="status">{saveMessage}</p> : null}</>}</div><div className="settings-section"><h2>账户</h2><button className="secondary-button" onClick={logout}>退出登录</button></div><div className="settings-section"><h2>数据</h2><p>知识源和个人记录保存在当前部署的数据目录中。完整备份需同时包含数据库与 Git 镜像。</p></div></div>;
 }
 
 function SearchDialog({ close, sources }: { close: () => void; sources: Source[] }) {
