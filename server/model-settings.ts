@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { completeModel, ModelFailure, normalizeModelUrl, type ModelConfig } from './model-client.ts';
+import { completeModel, MODEL_CONNECTION_TIMEOUT_MS, ModelFailure, normalizeModelUrl, type ModelConfig } from './model-client.ts';
 
 const key = 'model_config';
 interface StoredModel { enabled: boolean; baseUrl: string; model: string; apiKey: string; revision: number }
@@ -50,6 +50,6 @@ export function saveModelSettings(db: DatabaseSync, fallback: ModelConfig, input
 export async function testModelSettings(db: DatabaseSync, fallback: ModelConfig, input: ModelInput) {
   const next = candidate(db, fallback, input, true);
   const start = Date.now();
-  await completeModel({ ...fallback, ...next }, [{ role: 'user', content: 'Connection test. Reply only OK.' }]);
+  await completeModel({ ...fallback, ...next, timeoutMs: fallback.timeoutMs ?? MODEL_CONNECTION_TIMEOUT_MS }, [{ role: 'user', content: 'Connection test. Reply only OK.' }]);
   return { ok: true, model: next.model, latencyMs: Date.now() - start };
 }

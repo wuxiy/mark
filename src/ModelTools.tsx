@@ -8,6 +8,9 @@ import { request, type AskAnswer, type AskStatus, type DocumentDetail, type Sour
 function Loading({ rows = 3 }: { rows?: number }) {
   return <div className="skeleton-stack" aria-label="正在生成" aria-busy="true">{Array.from({ length: rows }, (_, index) => <div className="skeleton-row" key={index} />)}</div>;
 }
+function ModelProgress() {
+  return <><p className="ask-intro" role="status">正在等待模型返回，最长等待 120 秒。较长解读可能需要 1–2 分钟，可随时取消。</p><Loading /></>;
+}
 function Feedback({ message, retry }: { message: string; retry?: () => void }) {
   return <div className="notice" role="alert"><CircleAlert size={18} /><span>{message}</span>{retry ? <button onClick={retry}>重试</button> : null}</div>;
 }
@@ -99,7 +102,7 @@ export function AskPanel({ document, sources, selection, csrf, close }: { docume
       </> : null}
       <div className="ask-actions"><button className="primary-button" disabled={task.pending || (!selection && (question.trim().length < 2 || (scope === 'sources' && !sourceIds.length)))}>{task.pending ? '正在生成…' : selection ? '重新解释' : '发送问题'}</button>{task.pending ? <button type="button" className="secondary-button" onClick={task.cancel}>取消</button> : null}</div>
     </form> : <div className="simple-empty">{status.data.model && !status.data.enabled ? '模型功能已停用，请在设置中启用。' : '配置并启用模型后即可使用。'}<NavLink to="/settings" onClick={close}>查看设置</NavLink></div>}
-    {task.message ? <Feedback message={task.message} /> : null}{task.pending ? <Loading /> : null}{task.answer ? <EvidenceAnswer answer={task.answer} /> : null}
+    {task.message ? <Feedback message={task.message} /> : null}{task.pending ? <ModelProgress /> : null}{task.answer ? <EvidenceAnswer answer={task.answer} /> : null}
   </aside>;
 }
 
@@ -124,6 +127,6 @@ export function UpdateExplanation({ runId, documentId, csrf }: { runId: number; 
   const task = useModelTask(csrf), status = useRemote<AskStatus>('/ask/status');
   return <section className="update-explanation"><h2>更新影响解读</h2><p>仅发送本次变化片段及相关标注摘录，解读不会修改标注或阅读状态。</p>
     {status.message ? <Feedback message={status.message} retry={status.reload} /> : !status.data ? <Loading rows={1} /> : !status.data.configured ? <p>配置并启用模型后可解读。<NavLink to="/settings">查看设置</NavLink></p> : <div className="ask-actions"><button className="secondary-button" disabled={task.pending} onClick={() => void task.run(`/updates/${runId}/explain`, { documentId })}>{task.pending ? '正在解读…' : task.answer ? '重新解读' : '解读更新影响'}</button>{task.pending ? <button className="secondary-button" onClick={task.cancel}>取消</button> : null}</div>}
-    {task.message ? <Feedback message={task.message} /> : null}{task.pending ? <Loading /> : null}{task.answer ? <EvidenceAnswer answer={task.answer} /> : null}
+    {task.message ? <Feedback message={task.message} /> : null}{task.pending ? <ModelProgress /> : null}{task.answer ? <EvidenceAnswer answer={task.answer} /> : null}
   </section>;
 }

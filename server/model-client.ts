@@ -7,6 +7,9 @@ export interface ModelConfig {
   timeoutMs?: number;
 }
 
+export const MODEL_GENERATION_TIMEOUT_MS = 120_000;
+export const MODEL_CONNECTION_TIMEOUT_MS = 25_000;
+
 export class ModelFailure extends Error {
   constructor(public code: string, message: string, public status = 503) { super(message); }
 }
@@ -29,7 +32,8 @@ export async function completeModel(config: ModelConfig, messages: Array<{ role:
   if (!config.model?.trim()) throw new ModelFailure('MODEL_CONFIG_INVALID', '请填写模型名称', 400);
   let response: Response;
   let payload: unknown;
-  const timeout = AbortSignal.timeout(config.timeoutMs ?? 25_000);
+  const timeoutMs = config.timeoutMs ?? MODEL_GENERATION_TIMEOUT_MS;
+  const timeout = AbortSignal.timeout(timeoutMs);
   const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
   try {
     signal.throwIfAborted();
@@ -41,7 +45,7 @@ export async function completeModel(config: ModelConfig, messages: Array<{ role:
     if (response.ok) payload = await response.json();
   } catch (cause) {
     if (callerSignal?.aborted) throw new ModelFailure('MODEL_CANCELLED', '生成已取消', 499);
-    if (signal.aborted || (cause instanceof Error && cause.name === 'TimeoutError')) throw new ModelFailure('MODEL_TIMEOUT', '模型请求超时，请检查接入地址或稍后重试');
+    if (signal.aborted || (cause instanceof Error && cause.name === 'TimeoutError')) throw new ModelFailure('MODEL_TIMEOUT', `模型未在 ${Math.ceil(timeoutMs / 1000)} 秒内返回完整回答，请稍后重试或换用响应更快的模型`);
     if (cause instanceof SyntaxError) throw new ModelFailure('MODEL_RESPONSE_INVALID', '模型服务未返回有效 JSON，请检查兼容接口', 502);
     throw new ModelFailure('MODEL_UNAVAILABLE', '无法连接模型服务，请检查接入地址和网络');
   }
